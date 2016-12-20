@@ -71,7 +71,7 @@ function createRouter(opts) {
 
 		return {
 			// rel, prefixed, suitable for <a href="">
-			href: useHash ? href : loc.pathname + loc.search + loc.hash,
+			href: useHash ? (href || prefix) : loc.pathname + loc.search + loc.hash,
 			// un-prefixed, suitable for matching against regex route list
 			path: useHash ? loc.pathname.substr(1) : loc.pathname.substr(prefix.length),
 			// suitable for concat
