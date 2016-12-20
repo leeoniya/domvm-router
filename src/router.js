@@ -1,285 +1,312 @@
-	var stack = [], pos = null,		// these should go into sessionStorage
-		useHist = false,
-		willEnter = null,
-		willExit = null,
-		didEnter = null,
-		didExit = null,
-		notFound = null,
-		root = "";
+function createRouter(opts) {
+	var stack = [],
+		pos = null,		// these should go into sessionStorage
 
-	export function createRouter(routeFn, imp) {
-		var init = null;
+		routes = opts.routes || [],
 
-		function routeFromLoc() {
-			var l = location;
-			var href = useHist ? l.href.substr(l.origin.length) : (l.hash.substr(1) || "/");
-			return buildRoute(routes, root, href);
+		willEnter = opts.willEnter,
+		willExit = opts.willExit,
+		didEnter = opts.didEnter,
+		didExit = opts.didExit,
+		notFound = opts.notFound,
+
+		prefix = opts.prefix || "#/",				// "#", "#/", "/some/hist/root",			// "/#" ?
+		useHash = prefix[0] == "#";
+
+	// creates full regex paths by merging regex param validations
+	function buildRegexPath(r) {
+		// todo: first replace r.path regexp special chrs via RegExp.escape?
+		r.regexPath = new RegExp("^" +
+			r.path.replace(/:([^\/]+)/g, function(m, name) {
+				var segDef = r.vars || {};
+				var regExStr = ""+(segDef[name] || /[^\/]+/);
+				return "(" + regExStr.substring(1, regExStr.lastIndexOf("/")) + ")";
+			})
+		+ "$");
+	}
+
+	var A = document.createElement("a");
+	var LOC_VARS = "href protocol username password origin hostname host port pathname search hash".split(" ");
+
+	// adapted from http://stackoverflow.com/a/13405933
+	function parseUrl(url) {
+		A.href = url;
+
+		// IE fix
+		if (A.host == "")
+			A.href = A.href;
+
+		var l = {};
+
+		LOC_VARS.forEach(function(v) {
+			l[v] = A[v];
+		});
+
+		return l;
+	}
+
+	// parses query string to object
+	// todo?: arrays[]
+	function parseQuery(qstr) {
+		var query = {};
+		var a = qstr.substr(1).split('&');
+		for (var i = 0; i < a.length; i++) {
+			var b = a[i].split('=');
+			query[decodeURIComponent(b[0])] = decodeURIComponent(b[1] || '');
 		}
+		return query;
+	}
 
-		var api = {
-//			addRoute: function() {},
-//			delRoute: function() {},
-//			oninit: function() {},
-//			onEnter, onLeave
-			href: function(name, segs, query, hash, repl) {
-				var route = buildRoute(routes, root, name, segs, query, hash);
-				return (useHist ? "" : "#") + route.href;
-			},
-			config: function(opts) {
-				useHist = opts.useHist;
+	function buildQuery(query) {
+		var esc = encodeURIComponent;
 
-				if (useHist)
-					root = opts.root || "";
+		var qstr = Object.keys(query)
+			.map(function(k) { return esc(k) + '=' + esc(query[k]); })
+			.join('&');
 
-				willEnter = opts.willEnter || null;
-				willExit = opts.willExit || null;
-				didEnter = opts.didEnter || null;
-				didExit = opts.didExit || null;
-				notFound = opts.notFound || null;
+		return qstr.length ? '?' + qstr : '';
+	}
 
-				init = opts.init || null;
-			},
-			refresh: function() {
-				api.goto(routeFromLoc(),null,null,null,true);
-			},
-			// dest can be route key, href or route object from buildRoute()
-			goto: function(dest, segs, query, hash, repl, noFns) {
-				if (!dest.href)
-					dest = buildRoute(routes, root, dest, segs, query, hash);
+	// normalized non-matched route
+	function locFromUrl(url) {
+		var loc = parseUrl(url);
 
-				// is "_noMatch" a route? not really since there are multiple views, nomatch needs to accept original intended route
-				if (dest.name === false) {
-					if (notFound)
-						notFound(dest);		// || .apply(null, arguments)?
-					else
-						console.log("Could not find route");		// loop back to _noMatch?
-				}
-				else {
-					// BUG?: this will push dest onto stack before running can* checks, so
-
-					var toPos = null;
-					var dir = 0;
-					for (var i = 0; i < stack.length; i++) {
-						if (stack[i].href === dest.href) {		// set repl?
-							toPos = i;
-							break;
-						}
-					}
-
-					// new fwd
-					if (toPos === null) {
-						stack.splice(pos+1, 1e4);	// trim array
-						stack.push(dest);
-						toPos = stack.length - 1;
-					}
-
-					var prev = stack[pos];
-					var next = stack[toPos];
-
-					var canExit = true;
-					var canEnter = true;
-
-					if (pos !== null) {
-						if (willExit)
-							canExit = noFns || willExit(prev, next);
-
-						if (canExit !== false) {
-							var onexit = routes[prev.name].onexit;
-							canExit = !onexit ? true : noFns || onexit.apply(null, (prev ? [prev.segs, prev.query, prev.hash] : []).concat(next));
-
-							if (didExit)
-								didExit(prev, next);
-						}
-						else {
-						//	revert nav?
-						}
-					}
-
-					if (canExit !== false) {
-						if (willEnter)
-							canEnter = noFns || willEnter(next, prev);
-
-						if (canEnter !== false) {
-							var onenter = routes[next.name].onenter;
-							canEnter = noFns || onenter.apply(null, (next ? [next.segs, next.query, next.hash] : []).concat(prev));
-
-							if (didEnter)
-								didEnter(next, prev);
-						}
-
-						if (canEnter !== false) {
-							if (useHist) {
-								gotoLocChg = true;
-								history[repl ? "replaceState" : "pushState"](null, "title", next.href);
-							}
-							else {
-								var hash = "#"+next.href;
-
-								if (location.hash !== hash) {
-									gotoLocChg = true;
-
-									if (repl)
-										location.replace(hash);
-									else
-										location.hash = hash;
-								}
-							}
-
-							pos = toPos;
-						}
-						else {
-						//	revert nav?
-						}
-					}
-				}
-			},
-			// in contrast to goto(), this route getter/setter does not
-			// invoke handlers and is designed to reflect an already changed
-			// app/view state rather than requesting a state change
-			route: function(dest, segs, query, hash, repl) {
-				if (dest != null)
-					api.goto(dest, segs, query, hash, repl, true);				// TODO: avoid setting current if same as dest
-				else
-					return pos == null ? routeFromLoc() : stack[pos];
-			},
-	//		next:
-	//		prev:		// revert path
-		};
-
-		// BC compat
-		api.location = api.route;
-
-		var routes = routeFn(api, imp);
-
-		buildRegexPaths(routes, root);
-
-		// tmp flag that indicates that hash or location changed as result of a goto call rather than natively.
-		// prevents cyclic goto->hashchange->goto...
-		var gotoLocChg = false;
-
-		window.onhashchange = window.onpopstate = function(e) {
-			if (!useHist && e.type == "popstate")
-				return;
-
-			if (!useHist && gotoLocChg) {
-				gotoLocChg = false;
-				return;
-			}
-
-			api.goto(routeFromLoc(),null,null,null,true);
-		};
-
-		init && init();
-
-		return api;
-	};
-
-	// builds uniform route args and matches routes
-	// if href (including root) is provided for nameOrHref, root & remaining args are ignored
-	function buildRoute(routes, root, nameOrHref, segs, query, hash) {
-		var path = null,
-			name = null,
-			href = null;
-
-		// parse path, find route
-		if (nameOrHref[0] == "/") {
-			href = nameOrHref;
-			name = false;
-			segs = {};
-
-			var pathHash = href.split("#"),
-				pathQuery = pathHash[0].split("?");
-
-			path = pathQuery[0];
-			hash = pathHash[1];
-
-			if (pathQuery[1]) {
-				query = {};
-
-				pathQuery[1].split("&").map(function(pair) {
-					var nameVal = pair.split("=");
-					query[nameVal[0]] = nameVal[1] == null ? true : nameVal[1];
-				});
-			}
-
-			// find name & segs by matching root + path
-			var match;
-			for (var i in routes) {
-				var rtDef = routes[i],
-					pathDef = rtDef.path;
-
-		//		if (match = (root+path).match(rtDef.regexPath)) {
-				if (match = (path).match(rtDef.regexPath)) {
-					name = i;
-
-					if (pathDef.indexOf(":") !== -1) {
-						segs = {};
-						match.shift();
-						pathDef.replace(/:([^\/]+)/g, function(m, segName) {
-							segs[segName] = match.shift();
-						});
-					}
-
-					break;
-				}
-			}
-		}
-		// build path
-		else {
-			name = nameOrHref;
-
-			var rtDef = routes[name],
-				pathDef = root + rtDef.path,
-				segDef = rtDef.vars || {};
-
-			if (pathDef.indexOf(":") !== -1) {
-				href = path = pathDef.replace(/:([^\/]+)/g, function(m, segName) {
-					if ((segDef[segName] || /^[^\/]+$/).test(segs[segName]))
-						return (segs[segName] += "");
-
-					throw new Error("Invalid value for route '"+pathDef+"' segment '"+segName+"': '"+segs[segName]+"'");
-				});
-			}
-			else
-				href = path = pathDef;
-
-			if (query) {
-				href += "?";
-				for (var q in query)
-					href += q + (query[q] !== true ? "=" + query[q] : "") + "&";			// todo: trim "&", urlencode
-				href = href.slice(0,-1);
-			}
-
-			href += hash ? ("#" + hash) : "";
+		if (useHash) {
+			var href = loc.hash;
+			// re-parse from hash as if root
+			var loc = parseUrl(loc.protocol + '//' + loc.hostname + "/" + loc.hash.substr(prefix.length));
 		}
 
 		return {
-			href: href,
-			name: name,
-			path: path,
-			segs: segs,
-			hash: hash,
-			query: query,
+			// rel, prefixed, suitable for <a href="">
+			href: useHash ? href : loc.pathname + loc.search + loc.hash,
+			// un-prefixed, suitable for matching against regex route list
+			path: useHash ? loc.pathname.substr(1) : loc.pathname.substr(prefix.length),
+			// suitable for concat
+		//	search: loc.search,
+			query: loc.search != "" ? parseQuery(loc.search) : null,
+			hash: loc.hash,
 		};
 	}
 
-	// creates full regex paths by merging regex param validations
-	function buildRegexPaths(routes, root) {
-		for (var i in routes) {
-			var r = routes[i];
-			// todo: first replace r.path regexp special chrs via RegExp.escape?
-			r.regexPath = new RegExp("^" + root +
-				r.path.replace(/:([^\/]+)/g, function(m, name) {
-					var segDef = r.vars || {};
-					var regExStr = ""+(segDef[name] || /[^\/]+/);
-					return "(" + regExStr.substring(1, regExStr.lastIndexOf("/")) + ")";
-				})
-			+ "$");
+	// matcher - finds route from a loc object, augmenting it with route & parsed segs
+	// else returns null
+	// @loc must be output from locFromUrl() parser
+	function matchLoc(loc) {
+		// iterate routes, match path (and query?), extract segs
+		var match, route, segs;
+
+		for (var i = 0; i < routes.length; i++) {
+			var route = routes[i],
+				path = route.path;
+
+			if (match = loc.path.match(route.regexPath)) {
+				loc.route = route;
+
+				if (path.indexOf(":") !== -1) {
+					segs = {};
+					match.shift();
+					path.replace(/:([^\/]+)/g, function(m, segName) {
+						segs[segName] = match.shift();
+					});
+				}
+
+				loc.segs = segs;
+
+				break;
+			}
+		}
+
+		return loc.route != null ? loc : null;
+	}
+
+	function currentLoc() {
+		return matchLoc(locFromUrl(location.href));
+	}
+
+	function add(route, pos) {
+		routes.splice(pos, 0, route);
+		// compile
+		return api;
+	}
+
+	// gets a route by name, or
+	// can simply pull out of stack
+	function get(name) {
+		if (name == null)
+			return currentLoc();			// returns current loc w/ matched route
+
+		for (var i = 0; i < routes.length; i++)
+			if (routes[i].name == name)
+				return routes[i];
+	}
+
+	// should loc be pre-matched?
+	// should unknown routes still be set/handled?
+	function set(loc, repl, noFns) {
+	//	console.log(arguments);
+
+		// is "_noMatch" a route? not really since there are multiple views, nomatch needs to accept original intended route
+		if (loc.route == null && matchLoc(loc) == null) {
+			if (notFound)
+				notFound(loc);		// || .apply(null, arguments)?
+			else
+				console.log("Could not find route: " + loc.href);		// loop back to _noMatch?
+		}
+		else {
+			// BUG?: this will push dest onto stack before running can* checks, so
+
+			var toPos = null;
+			var dir = 0;
+			for (var i = 0; i < stack.length; i++) {
+				if (stack[i].href === loc.href) {		// set repl?
+					toPos = i;
+					break;
+				}
+			}
+
+			// new fwd
+			if (toPos === null) {
+				stack.splice(pos+1, 1e4);	// trim array
+				stack.push(loc);
+				toPos = stack.length - 1;
+			}
+
+			var prev = stack[pos];
+			var next = stack[toPos];
+
+			var canExit = true;
+			var canEnter = true;
+
+			if (pos !== null) {
+				if (willExit)
+					canExit = noFns || willExit(prev, next);
+
+				if (canExit !== false) {
+					var onexit = prev.route.onexit;
+					canExit = !onexit ? true : noFns || onexit.apply(null, (prev ? [prev.segs, prev.query, prev.hash] : []).concat(next));
+
+					if (didExit)
+						didExit(prev, next);
+				}
+				else {
+				//	revert nav?
+				}
+			}
+
+			if (canExit !== false) {
+				if (willEnter)
+					canEnter = noFns || willEnter(next, prev);
+
+				if (canEnter !== false) {
+					var onenter = next.route.onenter;
+					canEnter = noFns || onenter.apply(null, (next ? [next.segs, next.query, next.hash] : []).concat(prev));
+
+					if (didEnter)
+						didEnter(next, prev);
+				}
+
+				if (canEnter !== false) {
+					if (!useHash) {
+						gotoLocChg = true;
+						history[repl ? "replaceState" : "pushState"](null, "title", next.href);
+					}
+					else {
+						var hash = "#"+next.href;
+
+						if (location.hash !== hash) {
+							gotoLocChg = true;
+
+							if (repl)
+								location.replace(hash);
+							else
+								location.hash = hash;
+						}
+					}
+
+					pos = toPos;
+				}
+				else {
+				//	revert nav?
+				}
+			}
 		}
 	}
 
-/*
-	RegExp.escape = function(text) {
-		return text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+	function locFromRoute(route, segs, query, hash, repl) {
+		var loc = {
+			route: route,
+			segs: segs || {},
+
+			query: query || {},
+			hash: hash || '',
+			repl: repl || false,
+
+			href: '',
+			path: '',
+
+			toString: function() {
+				return loc.href;
+			},
+		};
+
+		var pathDef = route.path,
+			segDef = route.vars || {};
+
+		if (pathDef.indexOf(":") !== -1) {
+			loc.path = pathDef.replace(/:([^\/]+)/g, function(m, segName) {
+				var segVal = loc.segs[segName] == null ? '' : loc.segs[segName];
+
+				if ((segDef[segName] || /^[^\/]+$/).test(segVal))
+					return (segVal += "");
+
+				throw new Error("Invalid value for route '"+pathDef+"' segment '"+segName+"': '"+loc.segs[segName]+"'");
+			});
+		}
+
+		loc.href = prefix + loc.path + buildQuery(loc.query) + loc.hash;		// TODO: repl onclick?
+
+		return loc;
+	}
+
+	// INIT
+
+	routes.forEach(buildRegexPath);
+
+	// tmp flag that indicates that hash or location changed as result of a goto call rather than natively.
+	// prevents cyclic goto->hashchange->goto...
+	var gotoLocChg = false;
+
+	window.onhashchange = window.onpopstate = function(e) {
+		if (useHash && e.type == "popstate")
+			return;
+
+		if (useHash && gotoLocChg) {
+			gotoLocChg = false;
+			return;
+		}
+
+		set(currentLoc(), true);
 	};
-*/
+
+	var api = {
+		add: add,
+	//	remove:
+		get: get,
+		set: set,
+		build: locFromRoute,
+
+		href: function(name, segs, query, hash, repl) {
+			return locFromRoute(get(name), segs, query, hash, repl);
+		},
+
+	//	.refresh()
+	//	.resolve()
+	//	.match(url)
+
+	//	.mount()
+	//	.unmount()
+	};
+
+	return api;
+}
