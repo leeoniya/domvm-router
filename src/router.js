@@ -13,17 +13,9 @@ function createRouter(opts) {
 		prefix = opts.prefix || "#/",				// "#", "#/", "/some/hist/root",			// "/#" ?
 		useHash = prefix[0] == "#";
 
-	// creates full regex paths by merging regex param validations
-	function buildRegexPath(r) {
-		// todo: first replace r.path regexp special chrs via RegExp.escape?
-		r.regexPath = new RegExp("^" +
-			r.path.replace(/:([^\/]+)/g, function(m, name) {
-				var segDef = r.vars || {};
-				var regExStr = ""+(segDef[name] || /[^\/]+/);
-				return "(" + regExStr.substring(1, regExStr.lastIndexOf("/")) + ")";
-			})
-		+ "$");
-	}
+	// tmp flag that indicates that hash or location changed as result of a goto call rather than natively.
+	// prevents cyclic goto->hashchange->goto...
+	var gotoLocChg = false;
 
 	var A = document.createElement("a");
 	var LOC_VARS = "href protocol username password origin hostname host port pathname search hash".split(" ");
@@ -129,7 +121,7 @@ function createRouter(opts) {
 
 	function add(route, pos) {
 		routes.splice(pos, 0, route);
-		// compile
+		buildRegexPath(route);
 		return api;
 	}
 
@@ -272,6 +264,21 @@ function createRouter(opts) {
 		return loc;
 	}
 
+	// creates full regex paths by merging regex param validations
+	function buildRegexPath(r) {
+		if (r.regexPath != null)
+			return;
+
+		// todo: first replace r.path regexp special chrs via RegExp.escape?
+		r.regexPath = new RegExp("^" +
+			r.path.replace(/:([^\/]+)/g, function(m, name) {
+				var segDef = r.vars || {};
+				var regExStr = ""+(segDef[name] || /[^\/]+/);
+				return "(" + regExStr.substring(1, regExStr.lastIndexOf("/")) + ")";
+			})
+		+ "$");
+	}
+
 	function onChange(e) {
 	//	console.log(e);
 
@@ -286,36 +293,35 @@ function createRouter(opts) {
 		set(currentLoc(), true);
 	}
 
-	// tmp flag that indicates that hash or location changed as result of a goto call rather than natively.
-	// prevents cyclic goto->hashchange->goto...
-	var gotoLocChg = false;
+	function boot(failToRoot) {
+		routes.forEach(buildRegexPath);
+
+		try {
+			set(currentLoc(), true);
+		}
+		catch (e) {
+			if (failToRoot)
+				set(locFromUrl(prefix), true);
+			else
+				throw e;
+		}
+
+		window.onhashchange = window.onpopstate = onChange;
+	}
+
+	function hrefFromNamed(name, segs, query, hash, repl) {
+		return locFromRoute(get(name), segs, query, hash, repl);
+	}
 
 	var api = {
+		boot: boot,
+
 		add: add,
 	//	remove:
 		get: get,
 		set: set,
 		build: locFromRoute,
-
-		href: function(name, segs, query, hash, repl) {
-			return locFromRoute(get(name), segs, query, hash, repl);
-		},
-
-		boot: function(failToRoot) {
-			routes.forEach(buildRegexPath);
-
-			try {
-				set(currentLoc(), true);
-			}
-			catch (e) {
-				if (failToRoot)
-					set(locFromUrl(prefix), true);
-				else
-					throw e;
-			}
-
-			window.onhashchange = window.onpopstate = onChange;
-		},
+		href: hrefFromNamed,
 
 	//	.refresh()
 	//	.resolve()
