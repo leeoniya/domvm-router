@@ -13,8 +13,8 @@ function createRouter(opts) {
 		prefix = opts.prefix || "#/",				// "#", "#/", "/some/hist/root",			// "/#" ?
 		useHash = prefix[0] == "#";
 
-	// tmp flag that indicates that hash or location changed as result of a goto call rather than natively.
-	// prevents cyclic goto->hashchange->goto...
+	// tmp flag that indicates that hash or location changed as result of a set() call rather than natively.
+	// prevents cyclic set->hashchange->set...
 	var gotoLocChg = false;
 
 	var A = document.createElement("a");
@@ -71,7 +71,7 @@ function createRouter(opts) {
 
 		return {
 			// rel, prefixed, suitable for <a href="">
-			href: useHash ? (href || prefix) : loc.pathname + loc.search + loc.hash,
+			href: useHash ? href : loc.pathname + loc.search + loc.hash,
 			// un-prefixed, suitable for matching against regex route list
 			path: useHash ? loc.pathname.substr(1) : loc.pathname.substr(prefix.length),
 			// suitable for concat
@@ -219,6 +219,11 @@ function createRouter(opts) {
 						}
 					}
 
+					var title = next.route.title;
+
+					if (title != null)
+						document.title = typeof title == "function" ? title(next.segs, next.query, next.hash) : title;
+
 					pos = toPos;
 				}
 				else {
@@ -300,8 +305,22 @@ function createRouter(opts) {
 			set(currentLoc(), true);
 		}
 		catch (e) {
-			if (failToRoot)
-				set(locFromUrl(prefix), true);
+			if (failToRoot) {
+				var rootFound = false;
+
+				for (var i = 0; i < routes.length; i++) {
+					var path = routes[i].path;
+
+					if (path == '' || path == '/') {
+						set(locFromUrl(prefix + path), true);
+						rootFound = true;
+						break;
+					}
+				}
+
+				if (!rootFound)
+					throw "No root route found";
+			}
 			else
 				throw e;
 		}
