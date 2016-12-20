@@ -79,7 +79,7 @@ function createRouter(opts) {
 
 		return {
 			// rel, prefixed, suitable for <a href="">
-			href: useHash ? href : loc.pathname + loc.search + loc.hash,
+			href: useHash ? (href || prefix) : loc.pathname + loc.search + loc.hash,
 			// un-prefixed, suitable for matching against regex route list
 			path: useHash ? loc.pathname.substr(1) : loc.pathname.substr(prefix.length),
 			// suitable for concat
@@ -93,6 +93,9 @@ function createRouter(opts) {
 	// else returns null
 	// @loc must be output from locFromUrl() parser
 	function matchLoc(loc) {
+		if (loc.route != null)
+			return loc;
+
 		// iterate routes, match path (and query?), extract segs
 		var match, route, segs;
 
@@ -117,7 +120,7 @@ function createRouter(opts) {
 			}
 		}
 
-		return loc.route != null ? loc : null;
+		return loc;
 	}
 
 	function currentLoc() {
@@ -144,14 +147,14 @@ function createRouter(opts) {
 	// should loc be pre-matched?
 	// should unknown routes still be set/handled?
 	function set(loc, repl, noFns) {
-	//	console.log(arguments);
+		matchLoc(loc);
 
 		// is "_noMatch" a route? not really since there are multiple views, nomatch needs to accept original intended route
-		if (loc.route == null && matchLoc(loc) == null) {
+		if (loc.route == null) {
 			if (notFound)
 				notFound(loc);		// || .apply(null, arguments)?
 			else
-				console.log("Could not find route: " + loc.href);		// loop back to _noMatch?
+				throw "Could not find route: " + loc.href;		// loop back to _noMatch?
 		}
 		else {
 			// BUG?: this will push dest onto stack before running can* checks, so
@@ -212,7 +215,7 @@ function createRouter(opts) {
 						history[repl ? "replaceState" : "pushState"](null, "title", next.href);
 					}
 					else {
-						var hash = "#"+next.href;
+						var hash = next.href;
 
 						if (location.hash !== hash) {
 							gotoLocChg = true;
@@ -269,15 +272,9 @@ function createRouter(opts) {
 		return loc;
 	}
 
-	// INIT
+	function onChange(e) {
+	//	console.log(e);
 
-	routes.forEach(buildRegexPath);
-
-	// tmp flag that indicates that hash or location changed as result of a goto call rather than natively.
-	// prevents cyclic goto->hashchange->goto...
-	var gotoLocChg = false;
-
-	window.onhashchange = window.onpopstate = function(e) {
 		if (useHash && e.type == "popstate")
 			return;
 
@@ -287,7 +284,11 @@ function createRouter(opts) {
 		}
 
 		set(currentLoc(), true);
-	};
+	}
+
+	// tmp flag that indicates that hash or location changed as result of a goto call rather than natively.
+	// prevents cyclic goto->hashchange->goto...
+	var gotoLocChg = false;
 
 	var api = {
 		add: add,
@@ -298,6 +299,22 @@ function createRouter(opts) {
 
 		href: function(name, segs, query, hash, repl) {
 			return locFromRoute(get(name), segs, query, hash, repl);
+		},
+
+		boot: function(failToRoot) {
+			routes.forEach(buildRegexPath);
+
+			try {
+				set(currentLoc(), true);
+			}
+			catch (e) {
+				if (failToRoot)
+					set(locFromUrl(prefix), true);
+				else
+					throw e;
+			}
+
+			window.onhashchange = window.onpopstate = onChange;
 		},
 
 	//	.refresh()
